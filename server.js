@@ -515,15 +515,15 @@ async function main() {
             continue;
           }
           const newPair = refreshedPairs[0];
-          const newCookie = oldCookie.replace(/(?:^|;\\s*)arena-auth-prod-v1\\.0=[^;]+/, (match) => (match.startsWith(";") ? ";" : "") + " " + newPair);
+          const newCookie = oldCookie.replace(/(?:^|;\s*)arena-auth-prod-v1\.0=[^;]+/, (match) => (match.startsWith(";") ? ";" : "") + " " + newPair);
           const validation = validateArenaCookieFormat(newCookie);
           if (!validation.valid) {
             await dbQuery("UPDATE cookie_store SET status='refresh_failed' WHERE id=$1",[row.id]);
             continue;
           }
           let expiresAt = null;
-          const expiresAttribute = setCookies.find((v) => v.startsWith("arena-auth-prod-v1.0="))?.match(/;\\s*Expires=([^;]+)/i)?.[1];
-          const maxAgeAttribute = setCookies.find((v) => v.startsWith("arena-auth-prod-v1.0="))?.match(/;\\s*Max-Age=(\\d+)/i)?.[1];
+          const expiresAttribute = setCookies.find((v) => v.startsWith("arena-auth-prod-v1.0="))?.match(/;\s*Expires=([^;]+)/i)?.[1];
+          const maxAgeAttribute = setCookies.find((v) => v.startsWith("arena-auth-prod-v1.0="))?.match(/;\s*Max-Age=(\d+)/i)?.[1];
           if (expiresAttribute) expiresAt = new Date(expiresAttribute);
           else if (maxAgeAttribute) expiresAt = new Date(Date.now() + Number(maxAgeAttribute) * 1000);
           await dbQuery("UPDATE cookie_store SET encrypted_cookie=$2,expires_at=$3,status='saved' WHERE id=$1",[row.id,encryptSecret(newCookie),expiresAt]);
