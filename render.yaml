@@ -27,6 +27,8 @@ services:
           property: connectionString
       - key: ADMIN_TOKEN
         generateValue: true
+      - key: GATEWAY_API_TOKEN
+        generateValue: true
       - key: COOKIE_ENCRYPTION_KEY
         generateValue: true
       - key: PROJECT_ROOT
