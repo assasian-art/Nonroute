@@ -7,7 +7,7 @@ services:
     plan: starter
     region: singapore
     branch: feature/pdr-foundation
-    buildCommand: npm ci
+    buildCommand: npm install --no-audit --no-fund
     startCommand: npm start
     healthCheckPath: /healthz
     disk:
