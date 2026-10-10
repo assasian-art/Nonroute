@@ -1,0 +1,21 @@
+{
+  "name": "nonroute",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "check": "node --check server.js && node --check lib/router.js && node --check lib/cookies.js && node --check lib/agent.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "http-proxy": "^1.18.1",
+    "node-cron": "^4.2.1",
+    "omniroute": "3.8.52"
+  }
+}
