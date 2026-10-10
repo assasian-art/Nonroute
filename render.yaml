@@ -1,0 +1,47 @@
+# Blueprint for Nonroute. Render prompts for secrets during initial setup.
+# A persistent disk and a paid database plan may incur charges; review costs in Render before applying.
+services:
+  - type: web
+    name: nonroute
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: feature/pdr-foundation
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    disk:
+      name: nonroute-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nonroute-db
+          property: connectionString
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: COOKIE_ENCRYPTION_KEY
+        generateValue: true
+      - key: PROJECT_ROOT
+        value: /var/data/projects
+      - key: OMNIROUTE_DATA_DIR
+        value: /var/data/omniroute
+      - key: AUTO_DISCOVER_PROVIDERS
+        value: "false"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CLOUDFLARE_AI_BASE_URL
+        sync: false
+      - key: CLOUDFLARE_AI_TOKEN
+        sync: false
+databases:
+  - name: nonroute-db
+    databaseName: nonroute
+    plan: basic_256mb
+    region: singapore
+    postgresMajorVersion: "18"
