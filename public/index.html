@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nonroute Control Room</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#0b1020;color:#edf2ff}*{box-sizing:border-box}body{margin:0}header{padding:22px 5vw;border-bottom:1px solid #26304a;background:#11182b;display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:22px;margin:0}main{max-width:1100px;margin:28px auto;padding:0 18px;display:grid;gap:18px}.panel{border:1px solid #26304a;background:#11182b;border-radius:14px;padding:20px}h2{font-size:17px;margin:0 0 12px}p{color:#aebbd4;line-height:1.5}input,textarea,select{width:100%;background:#080d19;color:#edf2ff;border:1px solid #34415f;border-radius:8px;padding:11px;margin:5px 0 10px}textarea{min-height:115px;resize:vertical}button{background:#91b4ff;color:#091126;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}button:disabled{opacity:.4;cursor:not-allowed}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.status{padding:9px 12px;border-radius:8px;background:#080d19;white-space:pre-wrap;overflow-wrap:anywhere}.provider{padding:12px;border-bottom:1px solid #26304a;display:flex;justify-content:space-between;gap:12px}.muted{font-size:12px;color:#aebbd4}@media(max-width:650px){.row{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<header><div><h1>Nonroute Control Room</h1><div class="muted">OmniRoute gateway · keyless-first routing</div></div><button id="refresh">Refresh status</button></header>
+<main>
+<section class="panel"><h2>Admin access</h2><p>Enter the dashboard token configured as <code>ADMIN_TOKEN</code>. It is kept only in this browser session.</p><input id="token" type="password" placeholder="ADMIN_TOKEN"><button id="connect">Connect</button><div id="connectStatus" class="status" style="margin-top:10px">Not connected</div></section>
+<section class="panel"><h2>Provider catalog</h2><p>Keyless providers are primary candidates. Providers without a verified endpoint remain inactive until configured; routing does not call an LLM to choose a route.</p><div id="providers">Connect to load provider status.</div></section>
+<section class="panel"><h2>Arena / lmarena cookie</h2><p>Paste a Cookie header or Cookie-Editor JSON. The check validates format, not guaranteed live session validity. Cookies are encrypted at rest and never returned by the API.</p><textarea id="cookie" placeholder='Cookie header or Cookie-Editor JSON'></textarea><div class="row"><button id="checkCookie">Check cookie</button><button id="saveCookie" disabled>Save valid cookie</button></div><div id="cookieStatus" class="status" style="margin-top:10px">Cookie not checked.</div></section>
+<section class="panel"><h2>Daily tasks</h2><input id="taskTitle" placeholder="Task title"><textarea id="taskPrompt" placeholder="Task instructions"></textarea><div class="row"><input id="taskTime" type="time" value="09:00"><button id="addTask">Add daily task</button></div><div id="tasks" class="status">Connect to load tasks.</div></section>
+<section class="panel"><h2>System</h2><div id="health" class="status">Checking health…</div></section>
+</main>
+<script>
+let token="",cookieValid=false;
+const $=id=>document.getElementById(id);
+async function api(path,opts={}){const res=await fetch(path,{...opts,headers:{"Content-Type":"application/json","Authorization":"Bearer "+token,...opts.headers}});const data=await res.json().catch(()=>({error:"Invalid response"}));if(!res.ok)throw new Error(data.error||data.message||("HTTP "+res.status));return data}
+async function load(){try{const [providers,tasks]=await Promise.all([api("/api/providers"),api("/api/tasks")]);$("providers").innerHTML=providers.providers.map(p=>'<div class="provider"><div><b>'+esc(p.name)+'</b><div class="muted">'+esc(p.status)+' · priority '+p.priority+'</div></div><div class="muted">'+(p.enabled?"Enabled":"Inactive")+'</div></div>').join("");$("tasks").textContent=JSON.stringify(tasks.tasks,null,2);$("connectStatus").textContent="Connected"}catch(e){$("connectStatus").textContent=e.message}}
+function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+$("connect").onclick=async()=>{token=$("token").value.trim();try{await load()}catch(e){$("connectStatus").textContent=e.message}};
+$("refresh").onclick=async()=>{await checkHealth();if(token)await load()};
+async function checkHealth(){try{$("health").textContent=JSON.stringify(await fetch("/healthz").then(r=>r.json()),null,2)}catch(e){ $("health").textContent=e.message }}
+$("checkCookie").onclick=async()=>{cookieValid=false;$("saveCookie").disabled=true;try{const r=await api("/api/cookies/check",{method:"POST",body:JSON.stringify({cookie:$("cookie").value})});cookieValid=r.valid;$("saveCookie").disabled=!r.valid;$("cookieStatus").textContent=r.message}catch(e){$("cookieStatus").textContent=e.message}};
+$("saveCookie").onclick=async()=>{if(!cookieValid)return;try{const r=await api("/api/cookies",{method:"POST",body:JSON.stringify({cookie:$("cookie").value})});$("cookieStatus").textContent=r.message;$("cookie").value="";cookieValid=false;$("saveCookie").disabled=true}catch(e){$("cookieStatus").textContent="Save failed safely: "+e.message}};
+$("addTask").onclick=async()=>{try{await api("/api/tasks",{method:"POST",body:JSON.stringify({title:$("taskTitle").value,prompt:$("taskPrompt").value,runAt:$("taskTime").value,daily:true})});$("taskTitle").value="";$("taskPrompt").value="";await load()}catch(e){$("tasks").textContent=e.message}};
+checkHealth();
+</script>
+</body></html>
