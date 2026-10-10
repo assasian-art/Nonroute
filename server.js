@@ -480,7 +480,7 @@ async function startOmniRouteEngine() {
   try { await fs.access(cli); } catch { console.error("OmniRoute package CLI not found; custom API will remain available."); return; }
   await fs.mkdir(process.env.OMNIROUTE_DATA_DIR || path.join(DATA_DIR,"omniroute"), { recursive: true }).catch(()=>{});
   omniProcess = spawn(process.execPath, [cli], {
-    env: { ...process.env, PORT: String(OMNI_PORT), HOSTNAME: "127.0.0.1", HOME: DATA_DIR, OMNIROUTE_DATA_DIR: process.env.OMNIROUTE_DATA_DIR || path.join(DATA_DIR,"omniroute") },
+    env: { ...process.env, PORT: String(OMNI_PORT), HOSTNAME: "127.0.0.1", HOME: DATA_DIR, DATA_DIR: process.env.OMNIROUTE_DATA_DIR || path.join(DATA_DIR,"omniroute"), OMNIROUTE_DATA_DIR: process.env.OMNIROUTE_DATA_DIR || path.join(DATA_DIR,"omniroute") },
     stdio: ["ignore","inherit","inherit"]
   });
   omniProcess.on("spawn", () => { omniAlive = true; });
