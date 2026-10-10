@@ -475,6 +475,16 @@ async function startOmniRouteEngine() {
   });
   omniProcess.on("spawn", () => { omniAlive = true; });
   omniProcess.on("exit", (code) => { omniAlive = false; console.error("OmniRoute engine exited with code", code); });
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${OMNI_PORT}/`, { signal: AbortSignal.timeout(2000) });
+      if (response.ok) { omniAlive = true; return; }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  omniProcess.kill("SIGTERM");
+  throw new Error("OmniRoute engine did not become ready on port " + OMNI_PORT);
 }
 
 async function main() {
