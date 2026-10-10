@@ -16,9 +16,11 @@ test("router chooses the highest-priority healthy provider without an LLM call",
   assert.equal(result.reason, "primary");
 });
 
-test("router keeps a healthy sticky provider but fails back when primary recovers", () => {
-  assert.equal(chooseProvider([provider("b", 20), provider("a", 10)], "b").provider.id, "a");
-  assert.equal(chooseProvider([provider("b", 20), provider("a", 10)], "b", false).reason, "failback");
+test("router keeps a healthy sticky provider when the primary is unavailable and fails back when it recovers", () => {
+  const b = provider("b", 20);
+  const aDown = provider("a", 10, { health_status: "degraded" });
+  assert.equal(chooseProvider([b, aDown], "b").provider.id, "b");
+  assert.equal(chooseProvider([b, provider("a", 10)], "b").reason, "failback");
 });
 
 test("router excludes quota exhausted, quarantined, and image-incompatible providers", () => {
