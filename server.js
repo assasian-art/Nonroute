@@ -9,7 +9,7 @@ import { Pool } from "pg";
 import httpProxy from "http-proxy";
 import cron from "node-cron";
 import { chooseProvider, isImageRequest, nextFailureState, nextSuccessState } from "./lib/router.js";
-import { normalizeCookieInput, validateArenaCookieFormat, encryptSecret } from "./lib/cookies.js";
+import { normalizeCookieInput, validateArenaCookieFormat, encryptSecret, decryptSecret } from "./lib/cookies.js";
 import { operateOnFile } from "./lib/agent.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,10 +38,11 @@ app.use((req, res, next) => {
 });
 
 const providerSeeds = [
-  { id: "pollinations", name: "Pollinations (classic + OpenAI-compatible)", endpoint: process.env.POLLINATIONS_ENDPOINT || "https://text.pollinations.ai/openai", priority: 10, model: process.env.POLLINATIONS_MODEL || "openai", image: true },
-  { id: "llm7", name: "LLM7.io anonymous", endpoint: process.env.LLM7_ENDPOINT || "https://api.llm7.io/v1/chat/completions", priority: 20, model: process.env.LLM7_MODEL || "gpt-4o-mini", image: false },
-  { id: "kilo", name: "Kilo", endpoint: process.env.KILO_ENDPOINT || null, priority: 30, model: process.env.KILO_MODEL || "auto", image: false },
-  { id: "uncloseai", name: "UncloseAI", endpoint: process.env.UNCLOSEAI_ENDPOINT || null, priority: 40, model: process.env.UNCLOSEAI_MODEL || "auto", image: false },
+  { id: "pollinations-classic", name: "Pollinations classic (keyless)", endpoint: process.env.POLLINATIONS_CLASSIC_ENDPOINT || "https://text.pollinations.ai/", priority: 10, model: process.env.POLLINATIONS_CLASSIC_MODEL || "openai", image: false },
+  { id: "pollinations-openai", name: "Pollinations OpenAI-compatible", endpoint: process.env.POLLINATIONS_OPENAI_ENDPOINT || (process.env.POLLINATIONS_API_KEY ? "https://gen.pollinations.ai/v1/chat/completions" : null), priority: 15, model: process.env.POLLINATIONS_MODEL || "openai", image: true },
+  { id: "llm7", name: "LLM7.io anonymous", endpoint: process.env.LLM7_ENDPOINT || "https://api.llm7.io/v1/chat/completions", priority: 20, model: process.env.LLM7_MODEL || "auto", image: true },
+  { id: "kilo", name: "Kilo anonymous free models", endpoint: process.env.KILO_ENDPOINT || "https://api.kilo.ai/api/gateway/chat/completions", priority: 30, model: process.env.KILO_MODEL || "google/gemma-4-26b-a4b-it:free", image: false },
+  { id: "uncloseai", name: "UncloseAI keyless", endpoint: process.env.UNCLOSEAI_ENDPOINT || "https://hermes.ai.unturf.com/v1/chat/completions", priority: 40, model: process.env.UNCLOSEAI_MODEL || "auto", image: false },
   { id: "duckduckgo", name: "DuckDuckGo AI Chat", endpoint: process.env.DUCKDUCKGO_ENDPOINT || null, priority: 50, model: process.env.DUCKDUCKGO_MODEL || "auto", image: false },
   { id: "puter", name: "Puter.com AI", endpoint: process.env.PUTER_ENDPOINT || null, priority: 60, model: process.env.PUTER_MODEL || "auto", image: false },
   { id: "lmarena", name: "Arena / lmarena.ai cookie session", endpoint: process.env.LMARENA_ENDPOINT || null, priority: 70, model: process.env.LMARENA_MODEL || "auto", image: false }
@@ -282,11 +283,51 @@ app.post("/v1/chat/completions", async (req, res) => {
       if (!provider) break;
       tried.add(provider.id);
       try {
-        const response = await fetch(provider.endpoint_url, {
-          method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          body: JSON.stringify({ ...req.body, model: req.body.model && req.body.model !== "auto" ? req.body.model : provider.default_model }),
-          signal: AbortSignal.timeout(90000)
-        });
+        if (provider.id === "pollinations-classic" && req.body.stream) {
+          lastError = "Pollinations classic adapter does not support streaming.";
+          continue;
+        }
+        let providerModel = req.body.model && req.body.model !== "auto" ? req.body.model : provider.default_model;
+        if (!providerModel || providerModel === "auto") {
+          try {
+            const modelsUrl = new URL(provider.endpoint_url);
+            modelsUrl.pathname = modelsUrl.pathname.replace(/\\/chat\\/completions\\/?$/, "/models");
+            const modelResponse = await fetch(modelsUrl, { headers: { "Accept": "application/json" }, signal: AbortSignal.timeout(10000) });
+            const modelData = modelResponse.ok ? await modelResponse.json() : null;
+            providerModel = modelData?.data?.[0]?.id || modelData?.models?.[0]?.id || modelData?.models?.[0]?.name;
+            if (providerModel) await dbQuery("UPDATE provider_connections SET default_model=$2 WHERE id=$1", [provider.id,providerModel]);
+          } catch {}
+          if (!providerModel || providerModel === "auto") {
+            lastError = provider.id + " could not discover a default model.";
+            await markProviderFailure(provider,lastError);
+            continue;
+          }
+        }
+        let response;
+        if (provider.id === "pollinations-classic") {
+          const prompt = (req.body.messages || []).map((m) => String(m.role || "user") + ": " + (typeof m.content === "string" ? m.content : JSON.stringify(m.content))).join("\\n");
+          const classicUrl = new URL(encodeURIComponent(prompt), provider.endpoint_url.endsWith("/") ? provider.endpoint_url : provider.endpoint_url + "/");
+          classicUrl.searchParams.set("model", providerModel);
+          response = await fetch(classicUrl, { method: "GET", headers: { "Accept": "text/plain" }, signal: AbortSignal.timeout(90000) });
+          if (response.ok) {
+            const text = await response.text();
+            response = new Response(JSON.stringify({ id: "chatcmpl-nonroute", object: "chat.completion", created: Math.floor(Date.now()/1000), model: providerModel, choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+        } else {
+          const headers = { "Content-Type": "application/json", "Accept": "application/json" };
+          if (provider.id === "pollinations-openai" && process.env.POLLINATIONS_API_KEY) headers.Authorization = "Bearer " + process.env.POLLINATIONS_API_KEY;
+          if (provider.id === "llm7" && process.env.LLM7_API_KEY) headers.Authorization = "Bearer " + process.env.LLM7_API_KEY;
+          if (provider.id === "kilo" && process.env.KILO_API_KEY) headers.Authorization = "Bearer " + process.env.KILO_API_KEY;
+          if (provider.id === "lmarena") {
+            const cookie = await dbQuery("SELECT encrypted_cookie FROM cookie_store WHERE provider_id='lmarena' ORDER BY created_at DESC LIMIT 1");
+            if (cookie.rows[0]) headers.Cookie = decryptSecret(cookie.rows[0].encrypted_cookie);
+          }
+          response = await fetch(provider.endpoint_url, {
+            method: "POST", headers,
+            body: JSON.stringify({ ...req.body, model: providerModel }),
+            signal: AbortSignal.timeout(90000)
+          });
+        }
         if (!response.ok) {
           const bodyText = (await response.text()).slice(0, 1000);
           lastError = provider.id + " returned HTTP " + response.status + (bodyText ? ": " + bodyText : "");
@@ -429,7 +470,7 @@ async function startOmniRouteEngine() {
   try { await fs.access(cli); } catch { console.error("OmniRoute package CLI not found; custom API will remain available."); return; }
   await fs.mkdir(process.env.OMNIROUTE_DATA_DIR || path.join(DATA_DIR,"omniroute"), { recursive: true }).catch(()=>{});
   omniProcess = spawn(process.execPath, [cli], {
-    env: { ...process.env, PORT: String(OMNI_PORT), HOSTNAME: "127.0.0.1", HOME: process.env.HOME || DATA_DIR, OMNIROUTE_DATA_DIR: process.env.OMNIROUTE_DATA_DIR || path.join(DATA_DIR,"omniroute") },
+    env: { ...process.env, PORT: String(OMNI_PORT), HOSTNAME: "127.0.0.1", HOME: DATA_DIR, OMNIROUTE_DATA_DIR: process.env.OMNIROUTE_DATA_DIR || path.join(DATA_DIR,"omniroute") },
     stdio: ["ignore","inherit","inherit"]
   });
   omniProcess.on("spawn", () => { omniAlive = true; });
