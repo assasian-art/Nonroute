@@ -23,7 +23,7 @@ services:
         value: "10000"
       - key: DATABASE_URL
         fromDatabase:
-          name: nonroute-db
+          name: nonroute-prod-db
           property: connectionString
       - key: ADMIN_TOKEN
         generateValue: true
@@ -37,14 +37,36 @@ services:
         value: /var/data/omniroute
       - key: AUTO_DISCOVER_PROVIDERS
         value: "false"
+      - key: LLM7_ENDPOINT
+        value: https://api.llm7.io/v1/chat/completions
+      - key: KILO_ENDPOINT
+        value: https://api.kilo.ai/api/gateway/chat/completions
+      - key: UNCLOSEAI_ENDPOINT
+        value: https://hermes.ai.unturf.com/v1/chat/completions
+      - key: DUCKDUCKGO_ENDPOINT
+        sync: false
+      - key: PUTER_ENDPOINT
+        sync: false
+      - key: LMARENA_ENDPOINT
+        sync: false
+      - key: LMARENA_REFRESH_URL
+        sync: false
+      - key: OPENCODE_RELAY_BASE_URL
+        sync: false
+      - key: POLLINATIONS_API_KEY
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: CLOUDFLARE_AI_BASE_URL
         sync: false
       - key: CLOUDFLARE_AI_TOKEN
         sync: false
+      - key: CLOUDFLARE_AI_MODEL
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
 databases:
-  - name: nonroute-db
+  - name: nonroute-prod-db
     databaseName: nonroute
     plan: basic_256mb
     region: singapore
