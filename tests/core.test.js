@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chooseProvider, eligible, isImageRequest, nextFailureState } from "../lib/router.js";
-import { normalizeCookieInput, validateArenaCookieFormat } from "../lib/cookies.js";
+import { normalizeCookieInput, validateArenaCookieFormat, cookieExpiryFromInput, encryptSecret, decryptSecret } from "../lib/cookies.js";
 import { resolveProjectPath } from "../lib/agent.js";
 
 const provider = (id, priority, overrides = {}) => ({
@@ -47,4 +47,14 @@ test("Arena cookie format rejects missing cookie and accepts a base64 payload", 
 test("project sandbox blocks traversal", () => {
   assert.throws(() => resolveProjectPath("/tmp/project", "../../etc/passwd"), /Path denied/);
   assert.equal(resolveProjectPath("/tmp/project", "src/index.js"), "/tmp/project/src/index.js");
+});
+
+test("Cookie-Editor expiry is preserved and encrypted secrets round-trip", () => {
+  const expiry = Math.floor(Date.now() / 1000) + 3600;
+  const input = JSON.stringify([{ name: "arena-auth-prod-v1.0", value: Buffer.from("payload").toString("base64"), expirationDate: expiry }]);
+  assert.ok(Math.abs(new Date(cookieExpiryFromInput(input)).getTime() - expiry * 1000) < 10);
+  process.env.COOKIE_ENCRYPTION_KEY = "11".repeat(32);
+  const encrypted = encryptSecret("arena-auth-prod-v1.0=YWJj");
+  assert.notEqual(encrypted, "arena-auth-prod-v1.0=YWJj");
+  assert.equal(decryptSecret(encrypted), "arena-auth-prod-v1.0=YWJj");
 });
