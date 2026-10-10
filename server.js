@@ -515,7 +515,7 @@ async function main() {
             continue;
           }
           const newPair = refreshedPairs[0];
-          const newCookie = oldCookie.replace(/(?:^|;\s*)arena-auth-prod-v1\.0=[^;]+/, (match) => (match.startsWith(";") ? ";" : "") + " " + newPair);
+          const newCookie = oldCookie.replace(/(?:^|;\s*)arena-auth-prod-v1\.0=[^;]+/, (match) => (match.startsWith(";") ? "; " : "") + newPair);
           const validation = validateArenaCookieFormat(newCookie);
           if (!validation.valid) {
             await dbQuery("UPDATE cookie_store SET status='refresh_failed' WHERE id=$1",[row.id]);
