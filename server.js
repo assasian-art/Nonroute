@@ -268,7 +268,17 @@ async function markProviderFailure(provider, errorText) {
     [provider.id,state.failures,state.health_status,state.cooldown_until,state.quarantined,String(errorText).slice(0,500)]);
 }
 
-app.post("/v1/chat/completions", async (req, res) => {
+function requireGatewayToken(req, res, next) {
+  const expected = process.env.GATEWAY_API_TOKEN || "";
+  if (!expected) return res.status(503).json({ error: { message: "GATEWAY_API_TOKEN is not configured." } });
+  const supplied = String(req.headers.authorization || "").replace(/^Bearer\\s+/i, "");
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: { message: "Unauthorized." } });
+  next();
+}
+
+app.post("/v1/chat/completions", requireGatewayToken, async (req, res) => {
   try {
     const providers = await getProviders();
     const sessionKey = String(req.body.user || req.headers["x-session-id"] || req.body.model || "default").slice(0,200);
