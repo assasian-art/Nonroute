@@ -291,7 +291,7 @@ app.post("/v1/chat/completions", async (req, res) => {
         if (!providerModel || providerModel === "auto") {
           try {
             const modelsUrl = new URL(provider.endpoint_url);
-            modelsUrl.pathname = modelsUrl.pathname.replace(/\\/chat\\/completions\\/?$/, "/models");
+            modelsUrl.pathname = modelsUrl.pathname.endsWith("/chat/completions") ? modelsUrl.pathname.replace("/chat/completions", "/models") : modelsUrl.pathname.replace(/\/$/, "") + "/models";
             const modelResponse = await fetch(modelsUrl, { headers: { "Accept": "application/json" }, signal: AbortSignal.timeout(10000) });
             const modelData = modelResponse.ok ? await modelResponse.json() : null;
             providerModel = modelData?.data?.[0]?.id || modelData?.models?.[0]?.id || modelData?.models?.[0]?.name;
@@ -305,7 +305,7 @@ app.post("/v1/chat/completions", async (req, res) => {
         }
         let response;
         if (provider.id === "pollinations-classic") {
-          const prompt = (req.body.messages || []).map((m) => String(m.role || "user") + ": " + (typeof m.content === "string" ? m.content : JSON.stringify(m.content))).join("\\n");
+          const prompt = (req.body.messages || []).map((m) => String(m.role || "user") + ": " + (typeof m.content === "string" ? m.content : JSON.stringify(m.content))).join("\n");
           const classicUrl = new URL(encodeURIComponent(prompt), provider.endpoint_url.endsWith("/") ? provider.endpoint_url : provider.endpoint_url + "/");
           classicUrl.searchParams.set("model", providerModel);
           response = await fetch(classicUrl, { method: "GET", headers: { "Accept": "text/plain" }, signal: AbortSignal.timeout(90000) });
