@@ -28,7 +28,8 @@ let omniAlive = false;
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "2mb" }));
+app.use("/api", express.json({ limit: "2mb" }));
+app.use("/v1/chat/completions", express.json({ limit: "2mb" }));
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
@@ -323,7 +324,7 @@ async function runDueTasks() {
   const now = new Date();
   const hhmm = now.toISOString().slice(11,16);
   const date = now.toISOString().slice(0,10);
-  const tasks = await dbQuery("SELECT id,title,prompt,daily,last_run_date FROM user_tasks WHERE enabled=TRUE AND run_at=$1 AND (last_run_date IS DISTINCT FROM $2)", [hhmm,date]);
+  const tasks = await dbQuery("SELECT id,title,prompt,daily,last_run_date FROM user_tasks WHERE enabled=TRUE AND run_at <= $1 AND (last_run_date IS DISTINCT FROM $2)", [hhmm,date]);
   for (const task of tasks.rows) {
     const lock = await dbQuery("UPDATE user_tasks SET last_run_date=$2,last_error=NULL WHERE id=$1 AND last_run_date IS DISTINCT FROM $2 RETURNING id", [task.id,date]);
     if (!lock.rowCount) continue;
@@ -363,27 +364,30 @@ async function restoreLatestDiskBackup() {
   const parsed = JSON.parse(await fs.readFile(path.join(backupDir,names[0]),"utf8"));
   if (parsed.version !== 1 || !parsed.payload) throw new Error("Backup format is not supported.");
   const order = ["provider_connections","provider_health","routing_sticky","user_tasks","cookie_store"];
-  await dbQuery("BEGIN");
+  const client = await pool.connect();
+  await client.query("BEGIN");
   try {
-    for (const table of [...order].reverse()) await dbQuery("DELETE FROM " + table);
-    for (const row of parsed.payload.provider_connections || []) await dbQuery(
+    for (const table of [...order].reverse()) await client.query("DELETE FROM " + table);
+    for (const row of parsed.payload.provider_connections || []) await client.query(
       "INSERT INTO provider_connections (id,name,endpoint_url,enabled,priority,default_model,capabilities,quota_remaining,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)",
       [row.id,row.name,row.endpoint_url,row.enabled,row.priority,row.default_model,JSON.stringify(row.capabilities || {}),row.quota_remaining,row.updated_at]);
-    for (const row of parsed.payload.provider_health || []) await dbQuery(
+    for (const row of parsed.payload.provider_health || []) await client.query(
       "INSERT INTO provider_health (provider_id,failures,health_status,cooldown_until,quarantined,last_error,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
       [row.provider_id,row.failures,row.health_status,row.cooldown_until,row.quarantined,row.last_error,row.updated_at]);
-    for (const row of parsed.payload.routing_sticky || []) await dbQuery("INSERT INTO routing_sticky (session_key,provider_id,updated_at) VALUES ($1,$2,$3)",[row.session_key,row.provider_id,row.updated_at]);
-    for (const row of parsed.payload.user_tasks || []) await dbQuery(
+    for (const row of parsed.payload.routing_sticky || []) await client.query("INSERT INTO routing_sticky (session_key,provider_id,updated_at) VALUES ($1,$2,$3)",[row.session_key,row.provider_id,row.updated_at]);
+    for (const row of parsed.payload.user_tasks || []) await client.query(
       "INSERT INTO user_tasks (id,title,prompt,run_at,daily,enabled,last_run_date,last_result,last_error,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
       [row.id,row.title,row.prompt,row.run_at,row.daily,row.enabled,row.last_run_date,row.last_result,row.last_error,row.created_at]);
-    for (const row of parsed.payload.cookie_store || []) await dbQuery(
+    for (const row of parsed.payload.cookie_store || []) await client.query(
       "INSERT INTO cookie_store (id,provider_id,encrypted_cookie,expires_at,status,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
       [row.id,row.provider_id,row.encrypted_cookie,row.expires_at,row.status,row.created_at]);
-    await dbQuery("COMMIT");
+    await client.query("COMMIT");
     return { restored: true, file: names[0] };
   } catch (e) {
-    await dbQuery("ROLLBACK").catch(() => {});
+    await client.query("ROLLBACK").catch(() => {});
     throw e;
+  } finally {
+    client.release();
   }
 }
 
