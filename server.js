@@ -9,7 +9,7 @@ import { Pool } from "pg";
 import httpProxy from "http-proxy";
 import cron from "node-cron";
 import { chooseProvider, isImageRequest, nextFailureState, nextSuccessState } from "./lib/router.js";
-import { normalizeCookieInput, validateArenaCookieFormat, encryptSecret, decryptSecret } from "./lib/cookies.js";
+import { normalizeCookieInput, validateArenaCookieFormat, encryptSecret, decryptSecret, cookieExpiryFromInput } from "./lib/cookies.js";
 import { operateOnFile } from "./lib/agent.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -177,7 +177,7 @@ app.post("/api/cookies", requireAdmin, async (req, res) => {
     if (!validation.valid) return res.status(400).json({ error: validation.message, saved: false });
     const encrypted = encryptSecret(cookieHeader);
     await dbQuery("INSERT INTO cookie_store (id,provider_id,encrypted_cookie,expires_at,status) VALUES ($1,'lmarena',$2,$3,'saved')", [
-      crypto.randomUUID(), encrypted, req.body.expiresAt ? new Date(req.body.expiresAt) : null
+      crypto.randomUUID(), encrypted, req.body.expiresAt ? new Date(req.body.expiresAt) : cookieExpiryFromInput(req.body.cookie)
     ]);
     res.json({ saved: true, message: "Cookie saved encrypted. Live session validity has not been independently verified." });
   } catch (e) {
@@ -495,9 +495,43 @@ async function main() {
   cron.schedule("17 */6 * * *", () => backupState().catch((e) => console.error("Backup failed:",e.message)));
   cron.schedule("* * * * *", async () => {
     try {
-      const r = await dbQuery("SELECT id,expires_at FROM cookie_store WHERE provider_id='lmarena' AND expires_at IS NOT NULL AND expires_at <= NOW() + INTERVAL '5 minutes' AND status <> 'refresh_due'");
-      for (const row of r.rows) await dbQuery("UPDATE cookie_store SET status='refresh_due' WHERE id=$1",[row.id]);
-      // No fake refresh: only mark due because the upstream provider does not expose a verified refresh contract here.
+      const r = await dbQuery("SELECT id,encrypted_cookie,expires_at FROM cookie_store WHERE provider_id='lmarena' AND expires_at IS NOT NULL AND expires_at <= NOW() + INTERVAL '5 minutes' AND status NOT IN ('refresh_due','refresh_failed')");
+      for (const row of r.rows) {
+        const refreshUrl = process.env.LMARENA_REFRESH_URL;
+        if (!refreshUrl) {
+          await dbQuery("UPDATE cookie_store SET status='refresh_due' WHERE id=$1",[row.id]);
+          continue;
+        }
+        try {
+          const url = new URL(refreshUrl);
+          if (url.protocol !== "https:") throw new Error("LMARENA_REFRESH_URL must use HTTPS.");
+          const oldCookie = decryptSecret(row.encrypted_cookie);
+          const method = String(process.env.LMARENA_REFRESH_METHOD || "GET").toUpperCase();
+          const response = await fetch(url, { method, headers: { "Cookie": oldCookie, "Accept": "text/html,application/json" }, signal: AbortSignal.timeout(15000) });
+          const setCookies = typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [response.headers.get("set-cookie")].filter(Boolean);
+          const refreshedPairs = setCookies.map((v) => v.split(";")[0]).filter((v) => v.startsWith("arena-auth-prod-v1.0="));
+          if (!response.ok || !refreshedPairs.length) {
+            await dbQuery("UPDATE cookie_store SET status='refresh_failed' WHERE id=$1",[row.id]);
+            continue;
+          }
+          const newPair = refreshedPairs[0];
+          const newCookie = oldCookie.replace(/(?:^|;\\s*)arena-auth-prod-v1\\.0=[^;]+/, (match) => (match.startsWith(";") ? ";" : "") + " " + newPair);
+          const validation = validateArenaCookieFormat(newCookie);
+          if (!validation.valid) {
+            await dbQuery("UPDATE cookie_store SET status='refresh_failed' WHERE id=$1",[row.id]);
+            continue;
+          }
+          let expiresAt = null;
+          const expiresAttribute = setCookies.find((v) => v.startsWith("arena-auth-prod-v1.0="))?.match(/;\\s*Expires=([^;]+)/i)?.[1];
+          const maxAgeAttribute = setCookies.find((v) => v.startsWith("arena-auth-prod-v1.0="))?.match(/;\\s*Max-Age=(\\d+)/i)?.[1];
+          if (expiresAttribute) expiresAt = new Date(expiresAttribute);
+          else if (maxAgeAttribute) expiresAt = new Date(Date.now() + Number(maxAgeAttribute) * 1000);
+          await dbQuery("UPDATE cookie_store SET encrypted_cookie=$2,expires_at=$3,status='saved' WHERE id=$1",[row.id,encryptSecret(newCookie),expiresAt]);
+        } catch (e) {
+          console.error("Arena cookie refresh failed:",e.message);
+          await dbQuery("UPDATE cookie_store SET status='refresh_failed' WHERE id=$1",[row.id]).catch(()=>{});
+        }
+      }
     } catch (e) { console.error("Cookie expiry check failed:",e.message); }
   });
   const server = http.createServer(app);
