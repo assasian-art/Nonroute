@@ -16,7 +16,7 @@
     "pg": "^8.16.3",
     "http-proxy": "^1.18.1",
     "node-cron": "^4.2.1",
-    "omniroute": "3.8.50"
+    "omniroute": "^3.8.50"
   },
   "description": "OmniRoute 3.8.50 runtime wrapper for Render; persistent data is stored under DATA_DIR."
 }
