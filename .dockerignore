@@ -9,3 +9,15 @@ coverage
 /var/data
 /data
 /backups
+
+# The container runs the published OmniRoute npm package only.
+# These local wrapper sources and assets are not used by the Docker image.
+/server.js
+/lib/
+/public/
+/docs/
+/tests/
+/README.md
+/render.yaml
+/.gitignore
+/.node-version
