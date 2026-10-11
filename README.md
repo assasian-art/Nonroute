@@ -1,28 +1,24 @@
-# Nonroute
+# Nonroute — OmniRoute on Render
 
-OmniRoute-based, OpenAI-compatible AI gateway customization project.
+This repository deploys the published **OmniRoute 3.8.52** runtime through a small Render-compatible Docker wrapper.
 
-## Runtime status
+## Deployment
 
-The PDR implementation is in progress on `feature/pdr-foundation`. This branch includes the first application scaffold: PostgreSQL-backed state, deterministic provider routing primitives, cookie normalization/encryption, a project-scoped file-agent primitive, a self-service dashboard, and tests. It is not production-ready until provider endpoints are verified, all acceptance tests pass, and Render deployment is healthy.
+- Render workspace: Airouter
+- Service: `nonroute-omniroute`
+- Region: Singapore
+- Branch: `feature/pdr-foundation`
+- Docker image installs the pinned `omniroute@3.8.52` package and launches its CLI server.
+- Auto-deploy is enabled for commits to the configured branch.
 
-## Local setup
+## Persistence (important)
 
-- Node.js 22+
-- PostgreSQL
-- `DATABASE_URL`
-- `ADMIN_TOKEN`
-- `COOKIE_ENCRYPTION_KEY` (32-byte key as 64 hex characters or base64)
-- Optional `GROQ_API_KEY`, `CLOUDFLARE_AI_BASE_URL`, and `CLOUDFLARE_AI_TOKEN`
+OmniRoute stores its state in SQLite under `DATA_DIR` (configured here as `/var/data/omniroute`). **Render must mount a persistent disk at `/var/data`** for provider connections, settings, and login state to survive redeploys and instance replacement. Merely setting `DATA_DIR` does not make an ephemeral filesystem persistent. Review Render disk pricing before attaching it.
 
-Run `npm ci`, `npm test`, then `npm start`.
+## Initial login
 
-## Security and operations
+Set `INITIAL_PASSWORD` in the Render environment. It is an initialization value and is ignored after a password is stored in the database. Do not store it in this repository. The requested value is weak; replace it with a unique password before exposing the dashboard to the public internet.
 
-- Never commit provider API keys or cookies.
-- Arena/lmarena cookie values are encrypted at rest and never returned by the API.
-- The cookie check validates the cookie format; it does not prove the upstream session is live.
-- No proxy pool is used for cookie-based session checks.
-- File-agent operations are constrained to `PROJECT_ROOT`.
-- Render Blueprint includes a persistent disk and managed Postgres. Review pricing before applying; these resources can incur charges.
-- Do not mark a release accepted until the user has personally tested the deployment.
+## Security
+
+Never commit provider keys, OAuth tokens, or cookies. Connect providers through the OmniRoute dashboard using credentials you control. Provider compatibility and upstream availability can change independently of this deployment.
