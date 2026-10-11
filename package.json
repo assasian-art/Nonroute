@@ -1,6 +1,6 @@
 {
   "name": "nonroute",
-  "version": "3.8.52",
+  "version": "3.8.50",
   "private": true,
   "type": "module",
   "engines": {
@@ -16,7 +16,7 @@
     "pg": "^8.16.3",
     "http-proxy": "^1.18.1",
     "node-cron": "^4.2.1",
-    "omniroute": "3.8.52"
+    "omniroute": "3.8.50"
   },
-  "description": "OmniRoute 3.8.52 runtime wrapper for Render; persistent data is stored under DATA_DIR."
+  "description": "OmniRoute 3.8.50 runtime wrapper for Render; persistent data is stored under DATA_DIR."
 }
