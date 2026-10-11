@@ -1,0 +1,32 @@
+# Optional Render Blueprint for the OmniRoute package wrapper.
+# Applying this Blueprint creates a paid Starter web service and a 1 GB persistent disk.
+# Review Render pricing before applying; it is intentionally not auto-applied to existing services.
+services:
+  - type: web
+    name: nonroute-omniroute
+    runtime: docker
+    plan: starter
+    region: singapore
+    branch: feature/pdr-foundation
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    disk:
+      name: nonroute-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: HOSTNAME
+        value: 0.0.0.0
+      - key: DATA_DIR
+        value: /var/data/omniroute
+      - key: OMNIROUTE_DATA_DIR
+        value: /var/data/omniroute
+      - key: REQUIRE_API_KEY
+        value: "true"
+      - key: INITIAL_PASSWORD
+        sync: false

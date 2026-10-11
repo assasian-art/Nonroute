@@ -1,0 +1,22 @@
+{
+  "name": "nonroute",
+  "version": "3.8.50",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node node_modules/omniroute/bin/omniroute.mjs",
+    "test": "node --test",
+    "check": "node --check server.js && node --check lib/router.js && node --check lib/cookies.js && node --check lib/agent.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "http-proxy": "^1.18.1",
+    "node-cron": "^4.2.1",
+    "omniroute": "^3.8.50"
+  },
+  "description": "OmniRoute 3.8.50 runtime wrapper for Render; persistent data is stored under DATA_DIR."
+}
