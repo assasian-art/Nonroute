@@ -39,23 +39,38 @@ export default function DeploymentPage() {
   const [updateBusy, setUpdateBusy] = useState(false);
 
   const loadAll = useCallback(async () => {
-    try {
-      const [s, r] = await Promise.all([
-        fetch("/api/state-sync").then((res) => res.json()),
-        fetch("/api/runtime/status").then((res) => res.json()),
-      ]);
-      setSync(s?.error ? null : s);
-      setRuntime(r?.error ? null : r);
-    } catch {
-      /* page stays usable with placeholders */
-    } finally {
-      setLoading(false);
-    }
+    const [s, r] = await Promise.all([
+      fetch("/api/state-sync").then((res) => res.json()),
+      fetch("/api/runtime/status").then((res) => res.json()),
+    ]);
+    setSync(s?.error ? null : s);
+    setRuntime(r?.error ? null : r);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+    let cancelled = false;
+    // Load in a promise callback rather than in the effect body: state updates
+    // land after the network round-trip, so this stays a pure subscription.
+    (async () => {
+      try {
+        const [s, r] = await Promise.all([
+          fetch("/api/state-sync").then((res) => res.json()),
+          fetch("/api/runtime/status").then((res) => res.json()),
+        ]);
+        if (cancelled) return;
+        setSync(s?.error ? null : s);
+        setRuntime(r?.error ? null : r);
+      } catch {
+        /* page stays usable with placeholders */
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSyncNow = async () => {
     setSyncBusy(true);

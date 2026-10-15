@@ -47,6 +47,18 @@ export async function GET() {
     const requestLogsEnv = process.env.ENABLE_REQUEST_LOGS;
     const sync = stateSyncStatus();
 
+    const warnings = [];
+    if (isRender()) {
+      warnings.push("Free plan: the container spins down after 15 min idle and the filesystem is ephemeral — state is restored from the state-data branch on boot.");
+      warnings.push("MITM and tunnel binaries are disabled on this deployment (no root, no writable persistent disk).");
+      if (requestLogsEnv === undefined) {
+        warnings.push("Request logging defaults to off here.");
+      }
+    }
+    if (getActiveDriver() === "sql.js") {
+      warnings.push("sql.js is the last-resort driver: the database is held in memory and flushed on change, which is heavier than the native drivers.");
+    }
+
     return NextResponse.json(
       {
         version: pkg.version,
@@ -56,22 +68,10 @@ export async function GET() {
         dataDir: DATA_DIR,
         dbFile: DATA_FILE,
         render: isRender(),
-        freeTierWarnings: [
-          ...(isRender()
-            ? [
-              "Free plan: container spins down after 15 min idle and the filesystem is ephemeral — state is restored from the state-data branch on boot.",
-              "MITM and tunnel binaries are disabled on this deployment (no root, no writable persistent disk).",
-              isRender() && requestLogsEnv === undefined ? "Request logging defaults to off here." : null,
-            ]
-            : []
-          )
-            .filter(Boolean)
-            .concat(
-              getActiveDriver() === "sql.js"
-                ? ["sql.js is the last-resort driver: the database is held in memory and flushed on change, which is heavier than the native drivers."]
-                : []
-            ),
-        requestLogsEnabled: requestLogsEnv ? requestLogsEnv.toLowerCase() === "true" : !isRender(),
+        freeTierWarnings: warnings,
+        requestLogsEnabled: requestLogsEnv
+          ? requestLogsEnv.toLowerCase() === "true"
+          : !isRender(),
         stateSync: sync,
         bootstrap: bootstrap
           ? {
