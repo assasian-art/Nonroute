@@ -86,6 +86,15 @@ async function initAdapter() {
 
   const { runMigrationOnce } = await import("./migrate.js");
   await runMigrationOnce(adapter);
+
+  // A snapshot restored at boot (state-data branch) is applied here, now that the
+  // database exists. No-op unless the sync is enabled and a snapshot is pending.
+  try {
+    const { applyPendingImport } = await import("../stateSync/githubState.js");
+    await applyPendingImport();
+  } catch (e) {
+    console.warn(`[DB] state snapshot import skipped: ${e?.message || e}`);
+  }
   return adapter;
 }
 

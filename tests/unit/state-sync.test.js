@@ -9,6 +9,9 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "state-sync-"));
 process.env.DATA_DIR = TMP;
 process.env["9ROUTER_STATE_SYNC_DEBOUNCE_MS"] = "200";
 process.env["9ROUTER_STATE_SYNC_FLUSH_MS"] = "60000";
+// Stand in for the database so a push never opens the real one.
+globalThis.__stateSyncDbExport = () =>
+  JSON.stringify({ settings: {}, providerConnections: [{ id: "c1", provider: "arena" }] });
 
 let mod;
 
@@ -110,7 +113,7 @@ describe("githubState — sha conflict retry", () => {
       if (url.includes("state-manifest.json")) {
         return makeResponse({ body: { content: { sha: "m1" }, commit: { sha: "commit1" } } });
       }
-      if (url.includes("db/data.sqlite")) {
+      if (url.includes("state.json")) {
         if (method === "PUT") {
           dbPuts += 1;
           if (dbPuts === 1) {
@@ -128,7 +131,7 @@ describe("githubState — sha conflict retry", () => {
 
     expect(dbPuts).toBe(2); // first PUT conflicted, retry succeeded
     expect(result.pushed).toBe(true);
-    expect(result.files).toContain("db/data.sqlite");
+    expect(result.files).toContain("state.json");
     expect(mod.status().lastError).toBeNull();
     expect(mod.status().lastPushAt).toBeTruthy();
   });

@@ -23,7 +23,8 @@ import zlib from "node:zlib";
 import { DATA_DIR } from "@/lib/dataDir.js";
 import { DATA_FILE, BACKUPS_DIR } from "@/lib/db/paths.js";
 
-const API_BASE = "https://api.github.com";
+// GitHub Enterprise / GHE deployments override the API host; defaults to github.com.
+const API_BASE = (process.env["9ROUTER_STATE_API_BASE"] || "https://api.github.com").replace(/\/+$/, "");
 const MANIFEST_REMOTE_PATH = "state-manifest.json";
 const DEBOUNCE_MS = Number(process.env["9ROUTER_STATE_SYNC_DEBOUNCE_MS"] || 5000);
 const PERIODIC_FLUSH_MS = Number(process.env["9ROUTER_STATE_SYNC_FLUSH_MS"] || 60000);
@@ -33,12 +34,37 @@ const BACKOFF_BASE_MS = 5000;
 const BACKOFF_MAX_MS = 300000;
 
 // The files that make up "state". `remote` is the path on the state-data branch.
+//
+// The SQLite file itself is deliberately NOT synced. A real installation's
+// data.sqlite is dominated by usage history and runs to well over a gigabyte,
+// so a whole-file snapshot would be rejected as an oversized blob on every
+// flush and connections would never persist. The database is exported as JSON
+// (connections, settings, keys, combos, proxy pools — no usage rows) instead,
+// and imported again on the next boot.
 function stateFiles() {
   return [
-    { local: DATA_FILE, remote: "db/data.sqlite", kind: "db" },
+    { local: path.join(DATA_DIR, "state.json"), remote: "state.json", kind: "db-export" },
     { local: path.join(DATA_DIR, "jwt-secret"), remote: "jwt-secret", kind: "text" },
     { local: path.join(DATA_DIR, "machine-id"), remote: "machine-id", kind: "text" },
   ];
+}
+
+// Current database contents as JSON. Null when the DB is not ready yet (a push
+// during boot), so the caller skips the entry instead of pushing an empty one.
+async function exportDbSnapshot() {
+  try {
+    // Test seam: tests inject an exporter so they never boot a real database.
+    const injected = globalThis.__stateSyncDbExport;
+    if (typeof injected === "function") {
+      const bytes = await injected();
+      return bytes ? Buffer.from(bytes) : null;
+    }
+    const { exportDb } = await import("@/lib/db/index.js");
+    return Buffer.from(JSON.stringify(await exportDb()), "utf8");
+  } catch (e) {
+    console.warn(`[StateSync] db export skipped: ${safeError(e)}`);
+    return null;
+  }
 }
 
 // ── Config (env only; never persisted) ───────────────────────────────────────
@@ -197,6 +223,34 @@ function newestLocalMtime() {
   return newest;
 }
 
+// ── applyPendingImport() — run once the DB adapter exists ───────────────────
+
+// pull() runs before the database is opened, so it can only drop the snapshot on
+// disk. The driver calls this right after the adapter is created, which is when
+// the JSON can finally be applied.
+export async function applyPendingImport() {
+  if (!isEnabled()) return { imported: false, reason: "disabled" };
+  const pending = path.join(DATA_DIR, "state.json");
+  try {
+    if (!fs.existsSync(pending)) return { imported: false, reason: "nothing-pending" };
+    const payload = JSON.parse(fs.readFileSync(pending, "utf8"));
+    const { importDb } = await import("@/lib/db/index.js");
+    await importDb(payload);
+    fs.unlinkSync(pending);
+    log(`imported snapshot: ${payload.providerConnections?.length ?? 0} connection(s), ${Object.keys(payload.settings || {}).length} setting group(s)`);
+    return { imported: true };
+  } catch (err) {
+    g.lastError = safeError(err);
+    log(`snapshot import failed: ${g.lastError}`);
+    try {
+      fs.renameSync(pending, `${pending}.failed`);
+    } catch {
+      /* best effort */
+    }
+    return { error: g.lastError };
+  }
+}
+
 // ── pull() — boot restore (before the DB adapter is created) ─────────────────
 
 export async function pull() {
@@ -284,10 +338,21 @@ async function doPush(reason) {
     const payloads = [];
     for (const f of stateFiles()) {
       let bytes;
-      try {
-        bytes = fs.readFileSync(f.local);
-      } catch {
-        continue; // state file not present yet
+      if (f.kind === "db-export") {
+        bytes = await exportDbSnapshot();
+        if (!bytes) continue;
+        // Keep a local copy so a crash mid-push still leaves the snapshot on disk.
+        try {
+          fs.writeFileSync(f.local, bytes);
+        } catch {
+          /* best effort */
+        }
+      } else {
+        try {
+          bytes = fs.readFileSync(f.local);
+        } catch {
+          continue; // state file not present yet
+        }
       }
       const gz = zlib.gzipSync(bytes);
       if (gz.length > MAX_REMOTE_BYTES) {
