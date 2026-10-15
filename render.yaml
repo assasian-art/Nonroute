@@ -1,0 +1,62 @@
+# Render blueprint — free Docker web service for 9router.
+#
+# Render never builds: CI (see .github/workflows/build.yml) builds the image and
+# pushes it to GHCR, and this blueprint only pulls the prebuilt image.
+#
+# Before applying:
+#   1. Replace OWNER in the image below with your GitHub org/user.
+#   2. Fill every `sync: false` secret in the Render dashboard (they stay blank here
+#      on purpose — no secret is committed).
+#
+# Free-plan notes: 512 MB RAM, 0.25 vCPU, ephemeral filesystem, 15 min idle spin-down.
+# State therefore lives in the `state-data` GitHub branch and is restored on boot by
+# the container bootstrap (runtime/bootstrap.js).
+
+services:
+  - type: web
+    name: 9router
+    runtime: image
+    plan: free
+    region: oregon
+    # Replace OWNER with your GitHub org/user (CI pushes ghcr.io/OWNER/9router).
+    image:
+      url: ghcr.io/OWNER/9router:latest
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # ── Required by the app ────────────────────────────────────────────────
+      - key: PORT
+        value: "20128"
+      - key: DATA_DIR
+        value: /var/data
+      # Keep V8 inside the free box instead of over-reserving.
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=1400
+      - key: RENDER
+        value: "true"
+
+      # ── Dashboard auth (generate once, then keep it stable across redeploys) ─
+      - key: JWT_SECRET
+        generateValue: true
+      - key: INITIAL_PASSWORD
+        sync: false
+
+      # ── State sync to the state-data branch (must be a PRIVATE repo) ───────
+      - key: 9ROUTER_STATE_PAT
+        sync: false
+      - key: 9ROUTER_STATE_REPO
+        sync: false
+      - key: 9ROUTER_STATE_BRANCH
+        value: state-data
+
+      # ── In-place self-update (dormant while these are empty) ──────────────
+      - key: 9ROUTER_UPDATE_OWNER
+        sync: false
+      - key: 9ROUTER_UPDATE_REPO
+        sync: false
+
+      # ── Free-plan hardening defaults ───────────────────────────────────────
+      - key: ENABLE_REQUEST_LOGS
+        value: "false"
+      - key: ENABLE_TRANSLATOR
+        value: "false"

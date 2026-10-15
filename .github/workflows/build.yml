@@ -1,0 +1,164 @@
+name: build
+
+# Build the standalone Next output once, publish:
+#   - a `server-bundle-<version>.tar.gz` release asset (used by the in-place updater)
+#   - a Docker image on GHCR (used by the Render blueprint)
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  NODE_OPTIONS: --max-old-space-size=6144
+  GHCR_IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  bundle:
+    name: Build bundle + image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (standalone)
+        run: npm run build
+
+      - name: Read version
+        id: ver
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Package server bundle
+        id: bundle
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The tarball mirrors exactly what the Docker runner ships (Dockerfile COPY
+          # list). Anything omitted here fails at runtime with a missing module, so
+          # keep this list and the Dockerfile in lockstep.
+          rm -rf bundle
+          mkdir -p bundle
+          # `.next/standalone` is copied to the app root (server.js, package.json, ...).
+          cp -a .next/standalone/. bundle/
+          mkdir -p bundle/.next bundle/node_modules bundle/src
+          cp -a .next/static bundle/.next/static
+          cp -a public bundle/public
+          cp -a custom-server.js bundle/custom-server.js
+          cp -a open-sse bundle/open-sse
+          cp -a src/mitm bundle/src/mitm
+          for mod in next sql.js node-machine-id node-forge; do
+            cp -a "node_modules/${mod}" "bundle/node_modules/${mod}"
+          done
+          # Bootstrap (container entrypoint) ships in the image, but including it keeps
+          # an extracted bundle self-runnable too.
+          cp -a runtime bundle/runtime
+
+          TARBALL="server-bundle-${VERSION}.tar.gz"
+          tar -czf "${TARBALL}" -C bundle .
+          sha256sum "${TARBALL}" > "${TARBALL}.sha256"
+          ls -lh "${TARBALL}" "${TARBALL}.sha256"
+          echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke-boot the bundle
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          DATA_DIR="$(mktemp -d)"
+          PORT=20201
+          ( cd bundle && DATA_DIR="$DATA_DIR" PORT="$PORT" HOSTNAME=127.0.0.1 node custom-server.js > /tmp/bundle.log 2>&1 & echo $! > /tmp/bundle.pid )
+          ok=0
+          for attempt in $(seq 1 45); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/health"; then ok=1; break; fi
+            sleep 2
+          done
+          kill "$(cat /tmp/bundle.pid)" 2>/dev/null || true
+          if [ "$ok" != "1" ]; then
+            echo "::error::bundle smoke boot failed"; tail -n 100 /tmp/bundle.log; exit 1
+          fi
+          echo "bundle smoke boot OK"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-bundle-${{ steps.ver.outputs.version }}
+          path: |
+            server-bundle-${{ steps.ver.outputs.version }}.tar.gz
+            server-bundle-${{ steps.ver.outputs.version }}.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            APP_VERSION=${{ steps.ver.outputs.version }}
+          tags: |
+            ${{ env.GHCR_IMAGE }}:${{ steps.ver.outputs.version }}
+            ${{ env.GHCR_IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+
+      - name: Smoke-test the image
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          container="9router-ci-smoke-${GITHUB_RUN_ID}"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name "$container" --publish 20202:20128 \
+            --env DATA_DIR=/app/data "${GHCR_IMAGE}:${VERSION}"
+          ok=0
+          for attempt in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:20202/api/health; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::image smoke boot failed"; docker logs "$container" || true; exit 1
+          fi
+          echo "image smoke boot OK"
+
+      - name: Attach tarball to release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            server-bundle-${{ steps.ver.outputs.version }}.tar.gz
+            server-bundle-${{ steps.ver.outputs.version }}.tar.gz.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
