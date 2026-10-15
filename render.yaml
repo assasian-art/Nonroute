@@ -4,8 +4,7 @@
 # pushes it to GHCR, and this blueprint only pulls the prebuilt image.
 #
 # Before applying:
-#   1. Replace OWNER in the image below with your GitHub org/user.
-#   2. Fill every `sync: false` secret in the Render dashboard (they stay blank here
+#   1. Fill every `sync: false` secret in the Render dashboard (they stay blank here
 #      on purpose — no secret is committed).
 #
 # Free-plan notes: 512 MB RAM, 0.25 vCPU, ephemeral filesystem, 15 min idle spin-down.
@@ -18,9 +17,9 @@ services:
     runtime: image
     plan: free
     region: oregon
-    # Replace OWNER with your GitHub org/user (CI pushes ghcr.io/OWNER/9router).
+    # CI pushes ghcr.io/assasian-art/nonroute (GHCR lower-cases the name).
     image:
-      url: ghcr.io/OWNER/9router:latest
+      url: ghcr.io/assasian-art/nonroute:latest
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:

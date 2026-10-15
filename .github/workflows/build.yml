@@ -5,7 +5,7 @@ name: build
 #   - a Docker image on GHCR (used by the Render blueprint)
 on:
   push:
-    branches: [main]
+    branches: [main, 9router-render-free]
     tags: ["v*"]
   workflow_dispatch:
 
