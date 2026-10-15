@@ -132,7 +132,9 @@ function persistStatus() {
 function resolveBundle() {
   try {
     if (fs.existsSync(CURRENT_PATH_FILE)) {
-      const target = fs.readFileSync(CURRENT_PATH_FILE, "utf8").trim();
+      // Stored as raw text, but tolerate a JSON-quoted value from an older run.
+      const raw = fs.readFileSync(CURRENT_PATH_FILE, "utf8").trim();
+      const target = raw.replace(/^"(.*)"$/s, "$1");
       if (target && fs.existsSync(target)) return target;
     }
   } catch { /* fall through */ }
@@ -154,7 +156,11 @@ function pointBundleAt(target) {
     try { fs.unlinkSync(CURRENT_LINK); } catch { /* ignore */ }
     try { fs.symlinkSync(target, CURRENT_LINK, "dir"); } catch { /* best effort */ }
   }
-  writeJson(CURRENT_PATH_FILE, target);
+  // Raw path, not JSON — resolveBundle reads this as plain text.
+  ensureDir(RUNTIME_DIR);
+  try {
+    fs.writeFileSync(CURRENT_PATH_FILE, target, "utf8");
+  } catch { /* best effort */ }
   state.bundlePath = target;
 }
 
@@ -180,7 +186,10 @@ function bundleEntry(bundleDir) {
 }
 
 function startChild() {
-  const bundleDir = resolveBundle();
+  let bundleDir = resolveBundle();
+  // A pointer that cannot be resolved must not leave the container running with
+  // no app: fall back to the bundle ensureBundle() just seeded / the image.
+  if (!bundleDir) bundleDir = state.bundlePath || state.target || APP_DIR;
   if (!bundleDir) {
     log("child", "no bundle resolved — cannot start");
     return;
